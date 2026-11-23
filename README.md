@@ -4,11 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>霓虹突擊：無限競技場 (NEON STRIKE)</title>
-<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; touch-action: none; }
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
   body { background: #070913; color: #e2e8f0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; overflow: hidden; width: 100vw; height: 100vh; }
-  canvas { display: block; width: 100%; height: 100%; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  button, input { touch-action: manipulation; }
 
   /* UI 層級 */
   .screen { position: fixed; inset: 0; display: flex; flex-direction: column; z-index: 10; pointer-events: none; }
@@ -21,12 +21,12 @@
   .title-box h1 { font-size: clamp(1.5rem, 4vw, 2.5rem); font-weight: 900; letter-spacing: 2px; background: linear-gradient(90deg, #00f0ff, #ff007f); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-shadow: 0 0 20px rgba(0,240,255,0.3); }
   .title-box p { font-size: 0.8rem; color: #94a3b8; }
   .stats-pill { background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(0, 240, 255, 0.3); border-radius: 999px; padding: 6px 14px; font-size: 0.85rem; display: flex; gap: 12px; align-items: center; }
-  .stats-pill input { background: transparent; border: none; border-bottom: 1px solid #00f0ff; color: #fff; width: 90px; font-weight: bold; outline: none; text-align: center; touch-action: auto; user-select: auto; }
+  .stats-pill input { background: transparent; border: none; border-bottom: 1px solid #00f0ff; color: #fff; width: 90px; font-weight: bold; outline: none; text-align: center; user-select: auto; -webkit-user-select: auto; }
 
   .lobby-main { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; max-width: 1100px; width: 100%; margin: auto; }
   @media (max-width: 768px) { .lobby-main { grid-template-columns: 1fr; } }
 
-  .panel { background: rgba(15, 23, 42, 0.82); backdrop-filter: blur(10px); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 16px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+  .panel { background: rgba(15, 23, 42, 0.84); backdrop-filter: blur(10px); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 16px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
   .panel h2 { font-size: 1rem; color: #00f0ff; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: 1px; }
 
   .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
@@ -40,7 +40,7 @@
   .opt-btn.active { background: #ff007f; border-color: #ff007f; color: #fff; font-weight: bold; }
 
   .room-box { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-  .room-input { flex: 1; min-width: 110px; padding: 10px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 1rem; text-align: center; letter-spacing: 2px; font-weight: bold; touch-action: auto; user-select: auto; }
+  .room-input { flex: 1; min-width: 110px; padding: 10px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 1rem; text-align: center; letter-spacing: 2px; font-weight: bold; user-select: auto; -webkit-user-select: auto; }
   .action-btn { padding: 10px 16px; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; transition: 0.15s; font-size: 0.9rem; }
   .btn-cyan { background: #00f0ff; color: #050811; }
   .btn-pink { background: #ff007f; color: #fff; }
@@ -55,7 +55,7 @@
   .chat-msg.sys { color: #38bdf8; font-style: italic; }
   .chat-msg.cheat { color: #fbbf24; font-weight: bold; }
   .chat-input-row { display: flex; gap: 6px; }
-  .chat-input-row input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 0.85rem; touch-action: auto; user-select: auto; }
+  .chat-input-row input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 0.85rem; user-select: auto; -webkit-user-select: auto; }
 
   /* 規則卡 */
   .rules-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-width: 1100px; width: 100%; margin: 0 auto; }
@@ -121,8 +121,8 @@
     <div class="panel interactive">
       <h2>⚔️ 競技場配置</h2>
       <div class="tabs">
-        <button class="tab-btn active" id="tab-pve" onclick="switchModeTab('pve')">單人 PVE / 大亂鬥</button>
-        <button class="tab-btn" id="tab-pvp" onclick="switchModeTab('pvp')">線上連線 PVP</button>
+        <button type="button" class="tab-btn active" id="tab-pve" onclick="switchModeTab('pve')">單人 PVE / 大亂鬥</button>
+        <button type="button" class="tab-btn" id="tab-pvp" onclick="switchModeTab('pvp')">線上連線 PVP</button>
       </div>
 
       <!-- PVE 設定 -->
@@ -130,18 +130,18 @@
         <div class="control-group">
           <label>參戰人數（1v1v1... 多人混戰大亂鬥）</label>
           <div class="btn-row" id="bot-count-btns">
-            <button class="opt-btn active" data-val="1" onclick="selectOpt('botCount', 1, this)">1v1 單挑 (2人)</button>
-            <button class="opt-btn" data-val="3" onclick="selectOpt('botCount', 3, this)">4人混戰</button>
-            <button class="opt-btn" data-val="7" onclick="selectOpt('botCount', 7, this)">8人大亂鬥</button>
-            <button class="opt-btn" data-val="15" onclick="selectOpt('botCount', 15, this)">16人超大亂鬥</button>
+            <button type="button" class="opt-btn active" onclick="selectOpt('botCount', 1, this)">1v1 單挑 (2人)</button>
+            <button type="button" class="opt-btn" onclick="selectOpt('botCount', 3, this)">4人混戰</button>
+            <button type="button" class="opt-btn" onclick="selectOpt('botCount', 7, this)">8人大亂鬥</button>
+            <button type="button" class="opt-btn" onclick="selectOpt('botCount', 15, this)">16人超大亂鬥</button>
           </div>
         </div>
         <div class="control-group">
           <label>AI 強度</label>
           <div class="btn-row" id="ai-diff-btns">
-            <button class="opt-btn" data-val="easy" onclick="selectOpt('aiDiff', 'easy', this)">新兵</button>
-            <button class="opt-btn active" data-val="normal" onclick="selectOpt('aiDiff', 'normal', this)">老手</button>
-            <button class="opt-btn" data-val="ace" onclick="selectOpt('aiDiff', 'ace', this)">王牌</button>
+            <button type="button" class="opt-btn" onclick="selectOpt('aiDiff', 'easy', this)">新兵</button>
+            <button type="button" class="opt-btn active" onclick="selectOpt('aiDiff', 'normal', this)">老手</button>
+            <button type="button" class="opt-btn" onclick="selectOpt('aiDiff', 'ace', this)">王牌</button>
           </div>
         </div>
       </div>
@@ -149,14 +149,14 @@
       <!-- PVP 連線設定 -->
       <div id="pvp-settings" class="hidden">
         <div class="control-group">
-          <label>線上即時連線（支援 2 人至無上限多人同房大亂鬥）</label>
+          <label>線上即時連線（支援跨裝置及同機雙分頁秒連）</label>
           <div class="room-box">
-            <button class="action-btn btn-cyan" onclick="createOnlineRoom()">創建房間</button>
+            <button type="button" class="action-btn btn-cyan" onclick="createOnlineRoom()">創建房間</button>
             <input type="text" id="join-room-code" class="room-input" placeholder="4位房號" maxlength="4" inputmode="numeric">
-            <button class="action-btn btn-pink" onclick="joinOnlineRoom(false)">加入參戰</button>
-            <button class="action-btn btn-amber" onclick="joinOnlineRoom(true)">進入觀戰席</button>
+            <button type="button" class="action-btn btn-pink" onclick="joinOnlineRoom(false)">加入參戰</button>
+            <button type="button" class="action-btn btn-amber" onclick="joinOnlineRoom(true)">進入觀戰席</button>
           </div>
-          <p id="pvp-status-text" style="font-size:0.8rem; color:#38bdf8; margin-top:8px;">狀態：未連線（輸入4位數房號即可與好友連線或觀戰）</p>
+          <p id="pvp-status-text" style="font-size:0.8rem; color:#38bdf8; margin-top:8px;">狀態：未連線（點擊創建房間或輸入4位數房號）</p>
         </div>
       </div>
 
@@ -164,15 +164,15 @@
       <div class="control-group">
         <label>每人復活次數上限（0 = 一命淘汰制，∞ = 無限死鬥模式）</label>
         <div class="btn-row" id="respawn-btns">
-          <button class="opt-btn" onclick="selectOpt('maxRespawns', 0, this)">0 次 (淘汰)</button>
-          <button class="opt-btn" onclick="selectOpt('maxRespawns', 1, this)">1 次</button>
-          <button class="opt-btn active" onclick="selectOpt('maxRespawns', 3, this)">3 次</button>
-          <button class="opt-btn" onclick="selectOpt('maxRespawns', 5, this)">5 次</button>
-          <button class="opt-btn" onclick="selectOpt('maxRespawns', 999, this)">∞ 無限死鬥</button>
+          <button type="button" class="opt-btn" onclick="selectOpt('maxRespawns', 0, this)">0 次 (淘汰)</button>
+          <button type="button" class="opt-btn" onclick="selectOpt('maxRespawns', 1, this)">1 次</button>
+          <button type="button" class="opt-btn active" onclick="selectOpt('maxRespawns', 3, this)">3 次</button>
+          <button type="button" class="opt-btn" onclick="selectOpt('maxRespawns', 5, this)">5 次</button>
+          <button type="button" class="opt-btn" onclick="selectOpt('maxRespawns', 999, this)">∞ 無限死鬥</button>
         </div>
       </div>
 
-      <button class="action-btn btn-green" id="start-game-btn" onclick="startLocalOrHostGame()">🚀 立即進入戰場</button>
+      <button type="button" class="action-btn btn-green" id="start-game-btn" onclick="startLocalOrHostGame()">🚀 立即進入戰場</button>
     </div>
 
     <!-- 右側：大廳聊天室 -->
@@ -181,8 +181,8 @@
       <div class="chat-container">
         <div class="chat-messages" id="lobby-chat-log"></div>
         <div class="chat-input-row">
-          <input type="text" id="lobby-chat-input" placeholder="輸入訊息或代碼..." onkeydown="if(event.key==='Enter') sendChat('lobby')">
-          <button class="action-btn btn-cyan" onclick="sendChat('lobby')">發送</button>
+          <input type="text" id="lobby-chat-input" placeholder="輸入訊息或 /YEE123456..." onkeydown="if(event.key==='Enter') sendChat('lobby')">
+          <button type="button" class="action-btn btn-cyan" onclick="sendChat('lobby')">發送</button>
         </div>
       </div>
     </div>
@@ -206,10 +206,10 @@
       <span id="hud-alive-label" style="color:#10b981">存活: 2</span>
     </div>
     <div class="hud-actions interactive">
-      <button class="mini-btn cmd-btn hidden" id="hud-cmd-btn" onclick="toggleAdminPanel()">[CMD] 指令</button>
-      <button class="mini-btn" id="hud-toggle-spec-btn" onclick="toggleSpectateSelf()">切換觀戰</button>
-      <button class="mini-btn" onclick="toggleInGameChat()">💬 聊天</button>
-      <button class="mini-btn" style="border-color:#ef4444;color:#fca5a5" onclick="returnToLobby()">離開</button>
+      <button type="button" class="mini-btn cmd-btn hidden" id="hud-cmd-btn" onclick="toggleAdminPanel()">[CMD] 指令</button>
+      <button type="button" class="mini-btn" id="hud-toggle-spec-btn" onclick="toggleSpectateSelf()">切換觀戰</button>
+      <button type="button" class="mini-btn" onclick="toggleInGameChat()">💬 聊天</button>
+      <button type="button" class="mini-btn" style="border-color:#ef4444;color:#fca5a5" onclick="returnToLobby()">離開</button>
     </div>
   </div>
 
@@ -217,24 +217,24 @@
   <div class="ingame-chat" id="ingame-chat-box">
     <div class="ingame-chat-log" id="ingame-chat-log"></div>
     <div class="quick-phrases interactive">
-      <button class="qp-btn" onclick="sendQuickChat('好準！')">好準！</button>
-      <button class="qp-btn" onclick="sendQuickChat('差一點！')">差一點！</button>
-      <button class="qp-btn" onclick="sendQuickChat('666')">666</button>
-      <button class="qp-btn" onclick="sendQuickChat('再來一局！')">再來一局！</button>
+      <button type="button" class="qp-btn" onclick="sendQuickChat('好準！')">好準！</button>
+      <button type="button" class="qp-btn" onclick="sendQuickChat('差一點！')">差一點！</button>
+      <button type="button" class="qp-btn" onclick="sendQuickChat('666')">666</button>
+      <button type="button" class="qp-btn" onclick="sendQuickChat('再來一局！')">再來一局！</button>
     </div>
     <div class="chat-input-row interactive hidden" id="ingame-chat-input-wrap">
       <input type="text" id="ingame-chat-input" placeholder="輸入聊天或代碼..." onkeydown="if(event.key==='Enter') sendChat('ingame')">
-      <button class="mini-btn btn-cyan" style="color:#000" onclick="sendChat('ingame')">送出</button>
+      <button type="button" class="mini-btn btn-cyan" style="color:#000" onclick="sendChat('ingame')">送出</button>
     </div>
   </div>
 
   <!-- 觀戰控制列 -->
   <div class="spec-bar interactive hidden" id="spectator-bar">
     <span style="color:#f59e0b;font-weight:bold;font-size:0.85rem;">👁️ 觀戰席</span>
-    <button class="mini-btn" onclick="cycleSpectateTarget(-1)">◀ 上一位</button>
+    <button type="button" class="mini-btn" onclick="cycleSpectateTarget(-1)">◀ 上一位</button>
     <span id="spec-target-name" style="font-size:0.85rem;min-width:80px;text-align:center;">上帝全景</span>
-    <button class="mini-btn" onclick="cycleSpectateTarget(1)">下一位 ▶</button>
-    <button class="mini-btn btn-amber" onclick="setGlobalOverview()">全景視角</button>
+    <button type="button" class="mini-btn" onclick="cycleSpectateTarget(1)">下一位 ▶</button>
+    <button type="button" class="mini-btn btn-amber" onclick="setGlobalOverview()">全景視角</button>
   </div>
 </div>
 
@@ -242,22 +242,22 @@
 <div id="admin-panel" class="interactive hidden">
   <h3>
     <span>⚡ 管理員指令面板</span>
-    <button class="mini-btn" onclick="toggleAdminPanel()">✕</button>
+    <button type="button" class="mini-btn" onclick="toggleAdminPanel()">✕</button>
   </h3>
   <div class="cheat-grid">
-    <button class="cheat-toggle" id="cht-god" onclick="toggleCheat('god')">🛡️ 無敵金身</button>
-    <button class="cheat-toggle" id="cht-infAmmo" onclick="toggleCheat('infAmmo')">🔥 無限彈藥</button>
-    <button class="cheat-toggle" id="cht-noCdDash" onclick="toggleCheat('noCdDash')">⚡ 零冷卻衝刺</button>
-    <button class="cheat-toggle" id="cht-speed" onclick="toggleCheat('speed')">👟 2倍極速</button>
-    <button class="cheat-toggle" id="cht-autoAim" onclick="toggleCheat('autoAim')">🎯 自動瞄準</button>
-    <button class="cheat-toggle" id="cht-homing" onclick="toggleCheat('homing')">🌀 子彈轉彎追蹤</button>
-    <button class="cheat-toggle" id="cht-wallBullet" onclick="toggleCheat('wallBullet')">🧱 子彈穿牆</button>
-    <button class="cheat-toggle" id="cht-wallWalk" onclick="toggleCheat('wallWalk')">👻 人物穿牆</button>
-    <button class="cheat-toggle" id="cht-esp" onclick="toggleCheat('esp')">👁️ 全圖透視</button>
-    <button class="cheat-toggle" id="cht-giant" onclick="toggleSizeCheat()">🦖 體型切換</button>
-    <button class="cheat-toggle" onclick="spawnCheatHeals()">💚 召喚3補包</button>
-    <button class="cheat-toggle" onclick="clearAllBullets()">🧹 清空全場彈幕</button>
-    <button class="cheat-toggle" style="grid-column: span 2;" onclick="addExtraRespawns()">➕ 增加 +3 次復活機會</button>
+    <button type="button" class="cheat-toggle" id="cht-god" onclick="toggleCheat('god')">🛡️ 無敵金身</button>
+    <button type="button" class="cheat-toggle" id="cht-infAmmo" onclick="toggleCheat('infAmmo')">🔥 無限彈藥</button>
+    <button type="button" class="cheat-toggle" id="cht-noCdDash" onclick="toggleCheat('noCdDash')">⚡ 零冷卻衝刺</button>
+    <button type="button" class="cheat-toggle" id="cht-speed" onclick="toggleCheat('speed')">👟 2倍極速</button>
+    <button type="button" class="cheat-toggle" id="cht-autoAim" onclick="toggleCheat('autoAim')">🎯 自動瞄準</button>
+    <button type="button" class="cheat-toggle" id="cht-homing" onclick="toggleCheat('homing')">🌀 子彈轉彎追蹤</button>
+    <button type="button" class="cheat-toggle" id="cht-wallBullet" onclick="toggleCheat('wallBullet')">🧱 子彈穿牆</button>
+    <button type="button" class="cheat-toggle" id="cht-wallWalk" onclick="toggleCheat('wallWalk')">👻 人物穿牆</button>
+    <button type="button" class="cheat-toggle" id="cht-esp" onclick="toggleCheat('esp')">👁️ 全圖透視</button>
+    <button type="button" class="cheat-toggle" id="cht-giant" onclick="toggleSizeCheat()">🦖 體型:正常</button>
+    <button type="button" class="cheat-toggle" onclick="spawnCheatHeals()">💚 召喚3補包</button>
+    <button type="button" class="cheat-toggle" onclick="clearAllBullets()">🧹 清空全場彈幕</button>
+    <button type="button" class="cheat-toggle" style="grid-column: span 2;" onclick="addExtraRespawns()">➕ 增加 +3 次復活機會</button>
   </div>
 </div>
 
@@ -268,11 +268,24 @@
     <p id="go-subtitle" style="color:#94a3b8;font-size:0.9rem;">競技場最後生還者</p>
     <div class="modal-stats" id="go-stats"></div>
     <div style="display:flex;gap:10px;justify-content:center;">
-      <button class="action-btn btn-cyan" style="flex:1" onclick="startLocalOrHostGame()">再來一局</button>
-      <button class="action-btn btn-pink" style="flex:1" onclick="returnToLobby()">返回大廳</button>
+      <button type="button" class="action-btn btn-cyan" style="flex:1" onclick="startLocalOrHostGame()">再來一局</button>
+      <button type="button" class="action-btn btn-pink" style="flex:1" onclick="returnToLobby()">返回大廳</button>
     </div>
   </div>
 </div>
+
+<!-- 動態非同步載入 PeerJS（確保離線或 CDN 緩慢時絕不阻塞主程式） -->
+<script>
+window.peerScriptLoaded = false;
+(function loadPeerScript() {
+  const s = document.createElement('script');
+  s.src = 'https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js';
+  s.async = true;
+  s.onload = () => { window.peerScriptLoaded = true; };
+  s.onerror = () => { window.peerScriptLoaded = false; };
+  document.head.appendChild(s);
+})();
+</script>
 
 <script>
 const canvas = document.getElementById('gameCanvas');
@@ -285,7 +298,7 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-// 物理常數
+// 物理與數值常數
 const BASE_SPEED = 220;
 const BULLET_SPEED = BASE_SPEED * 6.5;
 const DASH_DURATION = 1.0;
@@ -298,17 +311,23 @@ const AMMO_RELOAD_RATE = 1 / 1.5;
 const HIT_AMMO_BONUS = 0.5;
 const ROOM_PREFIX = 'ns_tw_2026_room_';
 
-// WebRTC Google STUN 配置
 const PEER_CONFIG = {
   debug: 1,
   config: {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' }
+      { urls: 'stun:stun1.l.google.com:19302' }
     ]
   }
 };
+
+// 安全讀取 localStorage（防止無痕模式或 file:// 限制報錯）
+function safeGetStorage(key, fallback) {
+  try { return localStorage.getItem(key) || fallback; } catch (e) { return fallback; }
+}
+function safeSetStorage(key, val) {
+  try { localStorage.setItem(key, val); } catch (e) {}
+}
 
 // 遊戲全域狀態
 const state = {
@@ -336,16 +355,16 @@ const state = {
     sizeMode: 0
   },
   stats: {
-    wins: parseInt(localStorage.getItem('ns_wins') || '0'),
-    kills: parseInt(localStorage.getItem('ns_kills') || '0')
+    wins: parseInt(safeGetStorage('ns_wins', '0'), 10),
+    kills: parseInt(safeGetStorage('ns_kills', '0'), 10)
   }
 };
 
 document.getElementById('stat-wins').textContent = state.stats.wins;
 document.getElementById('stat-kills').textContent = state.stats.kills;
 
-let mapWidth = 2200;
-let mapHeight = 1500;
+let mapWidth = 2000;
+let mapHeight = 1400;
 let walls = [];
 let players = {};
 let bullets = [];
@@ -353,34 +372,42 @@ let heals = [];
 let healWarnings = [];
 let particles = [];
 let floatingTexts = [];
-let myId = 'player_local';
+let myId = 'player_' + Math.random().toString(36).slice(2, 8);
 let healSpawnTimer = 5.0;
-let camera = { x: 1100, y: 750, zoom: 1 };
+let camera = { x: 1000, y: 700, zoom: 1 };
 let screenShake = 0;
 
 const COLORS = ['#00f0ff', '#ff007f', '#10b981', '#f59e0b', '#a855f7', '#3b82f6', '#ef4444', '#14b8a6'];
 
-// 音效合成器
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-function playTone(freq, type, duration, vol = 0.1) {
-  if (audioCtx.state === 'suspended') audioCtx.resume();
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-  osc.type = type;
-  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(freq * 0.4, audioCtx.currentTime + duration);
-  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-  osc.connect(gain);
-  gain.connect(audioCtx.destination);
-  osc.start();
-  osc.stop(audioCtx.currentTime + duration);
+// 延遲初始化音效引擎（避免未交互報錯）
+let audioCtx = null;
+function playTone(freq, type, duration, vol = 0.08) {
+  try {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) audioCtx = new AC();
+    }
+    if (!audioCtx) return;
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(freq * 0.4, audioCtx.currentTime + duration);
+    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+  } catch (e) {}
 }
 
 // 聊天室系統
 function appendChat(sender, text, type = 'normal') {
   const logs = [document.getElementById('lobby-chat-log'), document.getElementById('ingame-chat-log')];
   logs.forEach(log => {
+    if (!log) return;
     const div = document.createElement('div');
     div.className = `chat-msg ${type}`;
     div.textContent = sender ? `[${sender}]: ${text}` : text;
@@ -397,6 +424,7 @@ function sendChat(source) {
 
   const myName = document.getElementById('player-name-input').value.trim() || '特工';
 
+  // 作弊代碼 /YEE123456 -> 遮罩為 /######### 並解鎖指令面板
   if (raw === '/YEE123456') {
     const masked = '/#########';
     appendChat(myName, masked, 'cheat');
@@ -404,8 +432,8 @@ function sendChat(source) {
     if (!state.adminUnlocked) {
       state.adminUnlocked = true;
       document.getElementById('hud-cmd-btn').classList.remove('hidden');
-      appendChat('', '🔓 [系統] 管理員權限已解鎖！點擊右上角 [CMD] 開啟指令面板。', 'cheat');
-      playTone(880, 'sine', 0.3, 0.15);
+      appendChat('', '🔓 [系統] 管理員權限已解鎖！點擊 [CMD] 開啟指令面板。', 'cheat');
+      playTone(880, 'sine', 0.3, 0.12);
     }
     toggleAdminPanel(true);
     return;
@@ -511,18 +539,36 @@ function selectOpt(key, val, btn) {
 }
 
 // ==========================================
-// PeerJS 線上連線模組（含超時保護與 Google STUN）
+// 雙通道連線系統（PeerJS 跨裝置 + BroadcastChannel 同機秒連）
 // ==========================================
 let peer = null;
 let connections = [];
 let hostConn = null;
+let localChannel = null;
+
+function setupLocalChannel(code) {
+  if (localChannel) { try { localChannel.close(); } catch (e) {} }
+  if (typeof BroadcastChannel === 'undefined') return;
+  localChannel = new BroadcastChannel('ns_local_' + code);
+  localChannel.onmessage = (ev) => {
+    const data = ev.data;
+    if (!data || data.senderId === myId) return;
+    if (state.isHost) {
+      if (data.type === 'join') {
+        const p = createPlayerEntity(data.id, data.name, false, data.isSpectator);
+        players[data.id] = p;
+        appendChat('', `👋 ${data.name}（同機連線）加入了房間！`, 'sys');
+        localChannel.postMessage({ senderId: myId, type: 'init_world', walls, mapWidth, mapHeight, maxRespawns: state.maxRespawns });
+      } else {
+        handleNetDataAsHost({ playerId: data.id }, data);
+      }
+    } else {
+      handleNetDataAsClient(data);
+    }
+  };
+}
 
 function createOnlineRoom() {
-  if (typeof Peer === 'undefined') {
-    document.getElementById('pvp-status-text').textContent = '❌ 連線元件載入失敗，請確認網路連線後重新整理網頁。';
-    return;
-  }
-
   const code = Math.floor(1000 + Math.random() * 9000).toString();
   state.roomCode = code;
   state.isOnline = true;
@@ -530,23 +576,30 @@ function createOnlineRoom() {
   state.isSpectator = false;
   const peerId = ROOM_PREFIX + code;
 
+  // 立即啟動同機分頁秒連通道並顯示房號
+  setupLocalChannel(code);
   const statusEl = document.getElementById('pvp-status-text');
-  statusEl.textContent = `⏳ 正在建立房間 ${code}（若超過 6 秒將提示重試）...`;
+  statusEl.innerHTML = `✅ 房間已建立！房號：<strong style="font-size:1.25rem;color:#fbbf24">${code}</strong>（同機分頁可秒連，正在同步雲端大廳...）`;
+  document.getElementById('start-game-btn').classList.remove('hidden');
+  appendChat('', `🌐 已創建房間 [${code}]，可隨時按「立即進入戰場」！`, 'sys');
 
-  if (peer) peer.destroy();
+  if (typeof Peer === 'undefined') {
+    statusEl.innerHTML = `✅ 房間已建立！房號：<strong style="font-size:1.25rem;color:#fbbf24">${code}</strong>（目前為同機區域連線模式）`;
+    return;
+  }
+
+  if (peer) { try { peer.destroy(); } catch (e) {} }
   peer = new Peer(peerId, PEER_CONFIG);
 
   const timeout = setTimeout(() => {
     if (peer && !peer.open) {
-      statusEl.innerHTML = `⚠️ 連線伺服器逾時（可能受限於本地 file:// 或防火牆） <button class="mini-btn" onclick="createOnlineRoom()">點此重試</button>`;
+      statusEl.innerHTML = `✅ 房號：<strong style="font-size:1.25rem;color:#fbbf24">${code}</strong>（雲端伺服器較忙，同機分頁仍可正常連線）`;
     }
-  }, 6000);
+  }, 5000);
 
   peer.on('open', () => {
     clearTimeout(timeout);
-    statusEl.innerHTML = `✅ 房間已建立！房號：<strong style="font-size:1.2rem;color:#fbbf24">${code}</strong>（等待玩家加入，也可直接按下方開始）`;
-    document.getElementById('start-game-btn').classList.remove('hidden');
-    appendChat('', `🌐 已創建線上房間 [${code}]，分享房號給好友即可加入對戰或觀戰！`, 'sys');
+    statusEl.innerHTML = `✅ 雲端房間已就緒！房號：<strong style="font-size:1.25rem;color:#fbbf24">${code}</strong>`;
   });
 
   peer.on('connection', conn => {
@@ -563,11 +616,7 @@ function createOnlineRoom() {
 
   peer.on('error', err => {
     clearTimeout(timeout);
-    if (err.type === 'unavailable-id') {
-      createOnlineRoom();
-    } else {
-      statusEl.innerHTML = `❌ 連線失敗 (${err.type})，請確認網址為 https:// 或切換行動網路 <button class="mini-btn" onclick="createOnlineRoom()">重試</button>`;
-    }
+    if (err.type === 'unavailable-id') createOnlineRoom();
   });
 }
 
@@ -578,23 +627,37 @@ function joinOnlineRoom(asSpectator) {
     statusEl.textContent = '⚠️ 請先輸入 4 位數房間代碼！';
     return;
   }
-  if (typeof Peer === 'undefined') {
-    statusEl.textContent = '❌ 連線元件載入失敗，請確認網路連線。';
-    return;
-  }
 
   state.roomCode = code;
   state.isOnline = true;
   state.isHost = false;
   state.isSpectator = asSpectator;
+  const myName = document.getElementById('player-name-input').value.trim() || '特工';
+
+  // 先嘗試同機 BroadcastChannel 秒連
+  setupLocalChannel(code);
+  let joinedViaLocal = false;
+  if (localChannel) {
+    localChannel.postMessage({ senderId: myId, type: 'join', id: myId, name: myName, isSpectator: asSpectator });
+  }
 
   statusEl.textContent = `⏳ 正在連線至房間 ${code}...`;
-  if (peer) peer.destroy();
+
+  if (typeof Peer === 'undefined') {
+    setTimeout(() => {
+      if (!joinedViaLocal && state.screen !== 'game') {
+        enterGameUI();
+      }
+    }, 400);
+    return;
+  }
+
+  if (peer) { try { peer.destroy(); } catch (e) {} }
   peer = new Peer(PEER_CONFIG);
 
   const timeout = setTimeout(() => {
-    if (!hostConn || !hostConn.open) {
-      statusEl.innerHTML = `⚠️ 連線房間 ${code} 逾時，請確認房號正確或房主仍在線 <button class="mini-btn" onclick="joinOnlineRoom(${asSpectator})">重試</button>`;
+    if (state.screen !== 'game') {
+      statusEl.innerHTML = `⚠️ 雲端連線逾時，請確認房號 [${code}] 正確且房主在線 <button type="button" class="mini-btn" onclick="joinOnlineRoom(${asSpectator})">重試</button>`;
     }
   }, 6000);
 
@@ -603,13 +666,7 @@ function joinOnlineRoom(asSpectator) {
     hostConn = peer.connect(ROOM_PREFIX + code, { reliable: true });
     hostConn.on('open', () => {
       clearTimeout(timeout);
-      const myName = document.getElementById('player-name-input').value.trim() || '特工';
-      hostConn.send({
-        type: 'join',
-        id: myId,
-        name: myName,
-        isSpectator: asSpectator
-      });
+      hostConn.send({ type: 'join', id: myId, name: myName, isSpectator: asSpectator });
       enterGameUI();
     });
     hostConn.on('data', data => handleNetDataAsClient(data));
@@ -620,14 +677,17 @@ function joinOnlineRoom(asSpectator) {
     });
   });
 
-  peer.on('error', err => {
+  peer.on('error', () => {
     clearTimeout(timeout);
-    statusEl.innerHTML = `❌ 找不到房間 ${code} (${err.type})，請確認房號是否正確`;
+    statusEl.textContent = `❌ 找不到房間 ${code}，請確認房號是否正確`;
   });
 }
 
 function broadcastNet(msg) {
   if (!state.isOnline) return;
+  if (localChannel) {
+    try { localChannel.postMessage({ ...msg, senderId: myId }); } catch (e) {}
+  }
   if (state.isHost) {
     connections.forEach(c => { if (c.open) c.send(msg); });
   } else if (hostConn && hostConn.open) {
@@ -642,12 +702,12 @@ function handleNetDataAsHost(conn, data) {
     players[data.id] = p;
     appendChat('', `👋 ${data.name} ${data.isSpectator ? '進入了觀戰席' : '加入了戰場'}！`, 'sys');
     broadcastNet({ type: 'chat', sender: '', text: `👋 ${data.name} ${data.isSpectator ? '進入了觀戰席' : '加入了戰場'}！` });
-    conn.send({ type: 'init_world', walls, mapWidth, mapHeight, maxRespawns: state.maxRespawns });
+    if (conn.send) conn.send({ type: 'init_world', walls, mapWidth, mapHeight, maxRespawns: state.maxRespawns });
   } else if (data.type === 'input') {
     const p = players[data.id];
     if (p) {
       p.x = data.x; p.y = data.y; p.angle = data.angle;
-      p.hp = data.hp; p.ammo = data.ammo; p.isDashing = data.isDashing;
+      p.hp = data.hp; p.ammo = data.ammo; p.dashTimer = data.isDashing ? 0.5 : 0;
       p.dead = data.dead; p.isSpectator = data.isSpectator; p.radius = data.radius;
     }
   } else if (data.type === 'shoot') {
@@ -665,6 +725,11 @@ function handleNetDataAsClient(data) {
     mapWidth = data.mapWidth;
     mapHeight = data.mapHeight;
     state.maxRespawns = data.maxRespawns;
+    if (!players[myId]) {
+      const myName = document.getElementById('player-name-input').value.trim() || '特工';
+      players[myId] = createPlayerEntity(myId, myName, false, state.isSpectator);
+    }
+    if (state.screen !== 'game') enterGameUI();
   } else if (data.type === 'sync_state') {
     for (let id in data.players) {
       if (id === myId) {
@@ -787,7 +852,6 @@ function setupLobbyDemo() {
 function startLocalOrHostGame() {
   document.getElementById('gameover-modal').classList.add('hidden');
   if (!state.isOnline) {
-    myId = 'player_local';
     state.isHost = true;
     state.isSpectator = false;
   }
@@ -881,7 +945,9 @@ function setGlobalOverview() {
   document.getElementById('spec-target-name').textContent = '上帝全景';
 }
 
-// 三搖桿觸控與滑鼠鍵盤控制
+// ==========================================
+// 三搖桿多點觸控與滑鼠鍵盤控制
+// ==========================================
 const joysticks = {
   move: { active: false, touchId: null, originX: 0, originY: 0, curX: 0, curY: 0, dx: 0, dy: 0 },
   aim:  { active: false, touchId: null, baseX: 0, baseY: 0, curX: 0, curY: 0, dx: 0, dy: 0, angle: 0, valid: false },
@@ -1152,8 +1218,8 @@ function circleIntersectsWalls(cx, cy, r) {
 
 function resolveWallCollision(p) {
   if (p.id === myId && state.cheats.wallWalk) {
-    p.x = Math.max(p.radius, Math.min(mapWidth - p.radius, p.x));
-    p.y = Math.max(p.radius, Math.min(mapHeight - p.radius, p.y));
+    p.x = Math.max(p.radius + 40, Math.min(mapWidth - p.radius - 40, p.x));
+    p.y = Math.max(p.radius + 40, Math.min(mapHeight - p.radius - 40, p.y));
     return;
   }
   for (let w of walls) {
@@ -1245,7 +1311,7 @@ function damagePlayer(target, shooterId) {
       killer.kills++;
       if (killer.id === myId && state.screen === 'game') {
         state.stats.kills++;
-        localStorage.setItem('ns_kills', state.stats.kills);
+        safeSetStorage('ns_kills', state.stats.kills);
         document.getElementById('stat-kills').textContent = state.stats.kills;
       }
     }
@@ -1483,8 +1549,8 @@ function update(dt) {
       const me = players[myId];
       if (state.isHost) {
         broadcastNet({ type: 'sync_state', players, heals, healWarnings });
-      } else if (me && hostConn && hostConn.open) {
-        hostConn.send({
+      } else if (me) {
+        broadcastNet({
           type: 'input', id: myId,
           x: me.x, y: me.y, angle: me.angle,
           hp: me.hp, ammo: me.ammo, isDashing: me.dashTimer > 0,
@@ -1562,6 +1628,14 @@ function updateCamera(dt) {
   const me = players[myId];
   const isSpec = !me || me.isSpectator || (me.dead && me.respawnsLeft <= 0);
 
+  if (isSpec && state.specTargetId) {
+    const sp = players[state.specTargetId];
+    if (!sp || sp.isSpectator || (sp.dead && sp.respawnsLeft <= 0)) {
+      state.specTargetId = null;
+      document.getElementById('spec-target-name').textContent = '上帝全景';
+    }
+  }
+
   if (isSpec && !state.specTargetId) {
     camera.x += (mapWidth / 2 - camera.x) * 6 * dt;
     camera.y += (mapHeight / 2 - camera.y) * 6 * dt;
@@ -1599,7 +1673,7 @@ function updateHUDAndWinCondition() {
     const isMeWin = winner && winner.id === myId;
     if (isMeWin) {
       state.stats.wins++;
-      localStorage.setItem('ns_wins', state.stats.wins);
+      safeSetStorage('ns_wins', state.stats.wins);
       document.getElementById('stat-wins').textContent = state.stats.wins;
     }
     const me = players[myId];
