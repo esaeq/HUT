@@ -275,4 +275,1621 @@
 </div>
 
 <script>
-const canvas
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// 物理常數
+const BASE_SPEED = 220;
+const BULLET_SPEED = BASE_SPEED * 6.5;
+const DASH_DURATION = 1.0;
+const DASH_DISTANCE = BASE_SPEED * 5;
+const DASH_SPEED = DASH_DISTANCE / DASH_DURATION;
+const DASH_COOLDOWN = 10.0;
+const MAX_HP = 3;
+const MAX_AMMO = 3;
+const AMMO_RELOAD_RATE = 1 / 1.5;
+const HIT_AMMO_BONUS = 0.5;
+const ROOM_PREFIX = 'ns_tw_2026_room_';
+
+// WebRTC Google STUN 配置
+const PEER_CONFIG = {
+  debug: 1,
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' }
+    ]
+  }
+};
+
+// 遊戲全域狀態
+const state = {
+  screen: 'lobby',
+  modeTab: 'pve',
+  botCount: 1,
+  aiDiff: 'normal',
+  maxRespawns: 3,
+  isOnline: false,
+  isHost: true,
+  isSpectator: false,
+  specTargetId: null,
+  roomCode: '',
+  adminUnlocked: false,
+  cheats: {
+    god: false,
+    infAmmo: false,
+    noCdDash: false,
+    speed: false,
+    autoAim: false,
+    homing: false,
+    wallBullet: false,
+    wallWalk: false,
+    esp: false,
+    sizeMode: 0
+  },
+  stats: {
+    wins: parseInt(localStorage.getItem('ns_wins') || '0'),
+    kills: parseInt(localStorage.getItem('ns_kills') || '0')
+  }
+};
+
+document.getElementById('stat-wins').textContent = state.stats.wins;
+document.getElementById('stat-kills').textContent = state.stats.kills;
+
+let mapWidth = 2200;
+let mapHeight = 1500;
+let walls = [];
+let players = {};
+let bullets = [];
+let heals = [];
+let healWarnings = [];
+let particles = [];
+let floatingTexts = [];
+let myId = 'player_local';
+let healSpawnTimer = 5.0;
+let camera = { x: 1100, y: 750, zoom: 1 };
+let screenShake = 0;
+
+const COLORS = ['#00f0ff', '#ff007f', '#10b981', '#f59e0b', '#a855f7', '#3b82f6', '#ef4444', '#14b8a6'];
+
+// 音效合成器
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playTone(freq, type, duration, vol = 0.1) {
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(freq * 0.4, audioCtx.currentTime + duration);
+  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration);
+}
+
+// 聊天室系統
+function appendChat(sender, text, type = 'normal') {
+  const logs = [document.getElementById('lobby-chat-log'), document.getElementById('ingame-chat-log')];
+  logs.forEach(log => {
+    const div = document.createElement('div');
+    div.className = `chat-msg ${type}`;
+    div.textContent = sender ? `[${sender}]: ${text}` : text;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  });
+}
+
+function sendChat(source) {
+  const input = document.getElementById(source === 'lobby' ? 'lobby-chat-input' : 'ingame-chat-input');
+  const raw = input.value.trim();
+  if (!raw) return;
+  input.value = '';
+
+  const myName = document.getElementById('player-name-input').value.trim() || '特工';
+
+  if (raw === '/YEE123456') {
+    const masked = '/#########';
+    appendChat(myName, masked, 'cheat');
+    if (state.isOnline) broadcastNet({ type: 'chat', sender: myName, text: masked });
+    if (!state.adminUnlocked) {
+      state.adminUnlocked = true;
+      document.getElementById('hud-cmd-btn').classList.remove('hidden');
+      appendChat('', '🔓 [系統] 管理員權限已解鎖！點擊右上角 [CMD] 開啟指令面板。', 'cheat');
+      playTone(880, 'sine', 0.3, 0.15);
+    }
+    toggleAdminPanel(true);
+    return;
+  }
+
+  appendChat(myName, raw, 'normal');
+  if (state.isOnline) {
+    broadcastNet({ type: 'chat', sender: myName, text: raw });
+  }
+}
+
+function sendQuickChat(phrase) {
+  const myName = document.getElementById('player-name-input').value.trim() || '特工';
+  appendChat(myName, phrase, 'normal');
+  if (state.isOnline) {
+    broadcastNet({ type: 'chat', sender: myName, text: phrase });
+  }
+}
+
+function toggleInGameChat() {
+  const wrap = document.getElementById('ingame-chat-input-wrap');
+  wrap.classList.toggle('hidden');
+  if (!wrap.classList.contains('hidden')) {
+    document.getElementById('ingame-chat-input').focus();
+  }
+}
+
+// 管理員作弊面板控制
+function toggleAdminPanel(forceShow) {
+  const panel = document.getElementById('admin-panel');
+  if (typeof forceShow === 'boolean') {
+    panel.classList.toggle('hidden', !forceShow);
+  } else {
+    panel.classList.toggle('hidden');
+  }
+}
+
+function toggleCheat(key) {
+  state.cheats[key] = !state.cheats[key];
+  const btn = document.getElementById('cht-' + key);
+  if (btn) btn.classList.toggle('on', state.cheats[key]);
+  const me = players[myId];
+  if (me && key === 'god' && state.cheats.god) me.hp = me.maxHp;
+  if (me && key === 'infAmmo' && state.cheats.infAmmo) me.ammo = MAX_AMMO;
+  if (me && key === 'noCdDash' && state.cheats.noCdDash) me.dashCd = 0;
+}
+
+function toggleSizeCheat() {
+  state.cheats.sizeMode = (state.cheats.sizeMode + 1) % 3;
+  const labels = ['🦖 體型:正常', '🦖 體型:巨人2X', '🐜 體型:迷你0.5X'];
+  const btn = document.getElementById('cht-giant');
+  btn.textContent = labels[state.cheats.sizeMode];
+  btn.classList.toggle('on', state.cheats.sizeMode !== 0);
+  const me = players[myId];
+  if (me) {
+    if (state.cheats.sizeMode === 1) { me.radius = 44; me.maxHp = 6; me.hp = 6; }
+    else if (state.cheats.sizeMode === 2) { me.radius = 12; me.maxHp = 3; me.hp = Math.min(me.hp, 3); }
+    else { me.radius = 22; me.maxHp = 3; me.hp = Math.min(me.hp, 3); }
+  }
+}
+
+function spawnCheatHeals() {
+  const me = players[myId];
+  const bx = me ? me.x : mapWidth / 2;
+  const by = me ? me.y : mapHeight / 2;
+  for (let i = 0; i < 3; i++) {
+    heals.push({
+      id: 'h_' + Math.random(),
+      x: Math.max(80, Math.min(mapWidth - 80, bx + (Math.random() - 0.5) * 180)),
+      y: Math.max(80, Math.min(mapHeight - 80, by + (Math.random() - 0.5) * 180))
+    });
+  }
+  appendChat('', '💚 [指令] 已召喚 3 個回血急救包！', 'cheat');
+}
+
+function clearAllBullets() {
+  bullets = [];
+  appendChat('', '🧹 [指令] 已清空全場子彈！', 'cheat');
+}
+
+function addExtraRespawns() {
+  const me = players[myId];
+  if (me) {
+    me.respawnsLeft += 3;
+    appendChat('', `➕ [指令] 剩餘復活次數增加至 ${me.respawnsLeft} 次！`, 'cheat');
+  }
+}
+
+// 大廳 UI 互動
+function switchModeTab(tab) {
+  state.modeTab = tab;
+  document.getElementById('tab-pve').classList.toggle('active', tab === 'pve');
+  document.getElementById('tab-pvp').classList.toggle('active', tab === 'pvp');
+  document.getElementById('pve-settings').classList.toggle('hidden', tab !== 'pve');
+  document.getElementById('pvp-settings').classList.toggle('hidden', tab !== 'pvp');
+  document.getElementById('start-game-btn').classList.toggle('hidden', tab === 'pvp' && !state.isOnline);
+}
+
+function selectOpt(key, val, btn) {
+  state[key] = val;
+  Array.from(btn.parentElement.children).forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+// ==========================================
+// PeerJS 線上連線模組（含超時保護與 Google STUN）
+// ==========================================
+let peer = null;
+let connections = [];
+let hostConn = null;
+
+function createOnlineRoom() {
+  if (typeof Peer === 'undefined') {
+    document.getElementById('pvp-status-text').textContent = '❌ 連線元件載入失敗，請確認網路連線後重新整理網頁。';
+    return;
+  }
+
+  const code = Math.floor(1000 + Math.random() * 9000).toString();
+  state.roomCode = code;
+  state.isOnline = true;
+  state.isHost = true;
+  state.isSpectator = false;
+  const peerId = ROOM_PREFIX + code;
+
+  const statusEl = document.getElementById('pvp-status-text');
+  statusEl.textContent = `⏳ 正在建立房間 ${code}（若超過 6 秒將提示重試）...`;
+
+  if (peer) peer.destroy();
+  peer = new Peer(peerId, PEER_CONFIG);
+
+  const timeout = setTimeout(() => {
+    if (peer && !peer.open) {
+      statusEl.innerHTML = `⚠️ 連線伺服器逾時（可能受限於本地 file:// 或防火牆） <button class="mini-btn" onclick="createOnlineRoom()">點此重試</button>`;
+    }
+  }, 6000);
+
+  peer.on('open', () => {
+    clearTimeout(timeout);
+    statusEl.innerHTML = `✅ 房間已建立！房號：<strong style="font-size:1.2rem;color:#fbbf24">${code}</strong>（等待玩家加入，也可直接按下方開始）`;
+    document.getElementById('start-game-btn').classList.remove('hidden');
+    appendChat('', `🌐 已創建線上房間 [${code}]，分享房號給好友即可加入對戰或觀戰！`, 'sys');
+  });
+
+  peer.on('connection', conn => {
+    connections.push(conn);
+    conn.on('data', data => handleNetDataAsHost(conn, data));
+    conn.on('close', () => {
+      connections = connections.filter(c => c !== conn);
+      if (conn.playerId && players[conn.playerId]) {
+        appendChat('', `⚠️ ${players[conn.playerId].name} 離開了房間`, 'sys');
+        delete players[conn.playerId];
+      }
+    });
+  });
+
+  peer.on('error', err => {
+    clearTimeout(timeout);
+    if (err.type === 'unavailable-id') {
+      createOnlineRoom();
+    } else {
+      statusEl.innerHTML = `❌ 連線失敗 (${err.type})，請確認網址為 https:// 或切換行動網路 <button class="mini-btn" onclick="createOnlineRoom()">重試</button>`;
+    }
+  });
+}
+
+function joinOnlineRoom(asSpectator) {
+  const code = document.getElementById('join-room-code').value.trim();
+  const statusEl = document.getElementById('pvp-status-text');
+  if (code.length !== 4) {
+    statusEl.textContent = '⚠️ 請先輸入 4 位數房間代碼！';
+    return;
+  }
+  if (typeof Peer === 'undefined') {
+    statusEl.textContent = '❌ 連線元件載入失敗，請確認網路連線。';
+    return;
+  }
+
+  state.roomCode = code;
+  state.isOnline = true;
+  state.isHost = false;
+  state.isSpectator = asSpectator;
+
+  statusEl.textContent = `⏳ 正在連線至房間 ${code}...`;
+  if (peer) peer.destroy();
+  peer = new Peer(PEER_CONFIG);
+
+  const timeout = setTimeout(() => {
+    if (!hostConn || !hostConn.open) {
+      statusEl.innerHTML = `⚠️ 連線房間 ${code} 逾時，請確認房號正確或房主仍在線 <button class="mini-btn" onclick="joinOnlineRoom(${asSpectator})">重試</button>`;
+    }
+  }, 6000);
+
+  peer.on('open', id => {
+    myId = id;
+    hostConn = peer.connect(ROOM_PREFIX + code, { reliable: true });
+    hostConn.on('open', () => {
+      clearTimeout(timeout);
+      const myName = document.getElementById('player-name-input').value.trim() || '特工';
+      hostConn.send({
+        type: 'join',
+        id: myId,
+        name: myName,
+        isSpectator: asSpectator
+      });
+      enterGameUI();
+    });
+    hostConn.on('data', data => handleNetDataAsClient(data));
+    hostConn.on('close', () => {
+      clearTimeout(timeout);
+      appendChat('', '⚠️ 與房主斷開連線，已返回大廳。', 'sys');
+      returnToLobby();
+    });
+  });
+
+  peer.on('error', err => {
+    clearTimeout(timeout);
+    statusEl.innerHTML = `❌ 找不到房間 ${code} (${err.type})，請確認房號是否正確`;
+  });
+}
+
+function broadcastNet(msg) {
+  if (!state.isOnline) return;
+  if (state.isHost) {
+    connections.forEach(c => { if (c.open) c.send(msg); });
+  } else if (hostConn && hostConn.open) {
+    hostConn.send(msg);
+  }
+}
+
+function handleNetDataAsHost(conn, data) {
+  if (data.type === 'join') {
+    conn.playerId = data.id;
+    const p = createPlayerEntity(data.id, data.name, false, data.isSpectator);
+    players[data.id] = p;
+    appendChat('', `👋 ${data.name} ${data.isSpectator ? '進入了觀戰席' : '加入了戰場'}！`, 'sys');
+    broadcastNet({ type: 'chat', sender: '', text: `👋 ${data.name} ${data.isSpectator ? '進入了觀戰席' : '加入了戰場'}！` });
+    conn.send({ type: 'init_world', walls, mapWidth, mapHeight, maxRespawns: state.maxRespawns });
+  } else if (data.type === 'input') {
+    const p = players[data.id];
+    if (p) {
+      p.x = data.x; p.y = data.y; p.angle = data.angle;
+      p.hp = data.hp; p.ammo = data.ammo; p.isDashing = data.isDashing;
+      p.dead = data.dead; p.isSpectator = data.isSpectator; p.radius = data.radius;
+    }
+  } else if (data.type === 'shoot') {
+    spawnBullet(data.ownerId, data.x, data.y, data.angle, data.homing, data.wallBullet);
+    broadcastNet(data);
+  } else if (data.type === 'chat') {
+    appendChat(data.sender, data.text);
+    broadcastNet(data);
+  }
+}
+
+function handleNetDataAsClient(data) {
+  if (data.type === 'init_world') {
+    walls = data.walls;
+    mapWidth = data.mapWidth;
+    mapHeight = data.mapHeight;
+    state.maxRespawns = data.maxRespawns;
+  } else if (data.type === 'sync_state') {
+    for (let id in data.players) {
+      if (id === myId) {
+        if (players[myId] && data.players[myId]) {
+          players[myId].kills = data.players[myId].kills;
+        }
+        continue;
+      }
+      players[id] = data.players[id];
+    }
+    for (let id in players) {
+      if (!data.players[id]) delete players[id];
+    }
+    heals = data.heals;
+    healWarnings = data.healWarnings;
+  } else if (data.type === 'shoot') {
+    if (data.ownerId !== myId) {
+      spawnBullet(data.ownerId, data.x, data.y, data.angle, data.homing, data.wallBullet);
+    }
+  } else if (data.type === 'hit_confirm') {
+    if (data.targetId === myId && players[myId]) {
+      damagePlayer(players[myId], data.shooterId);
+    }
+    if (data.shooterId === myId && players[myId]) {
+      players[myId].ammo = Math.min(MAX_AMMO, players[myId].ammo + HIT_AMMO_BONUS);
+      spawnFloatingText(players[myId].x, players[myId].y - 35, '+0.5 彈藥', '#00f0ff');
+    }
+  } else if (data.type === 'chat') {
+    appendChat(data.sender, data.text);
+  }
+}
+
+// 地圖生成器
+function buildArenaMap(totalPlayers) {
+  const isLarge = totalPlayers > 4;
+  mapWidth = isLarge ? 3000 : 2000;
+  mapHeight = isLarge ? 2200 : 1400;
+  walls = [];
+
+  const t = 40;
+  walls.push({ x: 0, y: 0, w: mapWidth, h: t });
+  walls.push({ x: 0, y: mapHeight - t, w: mapWidth, h: t });
+  walls.push({ x: 0, y: 0, w: t, h: mapHeight });
+  walls.push({ x: mapWidth - t, y: 0, w: t, h: mapHeight });
+
+  const cols = isLarge ? 4 : 3;
+  const rows = isLarge ? 3 : 2;
+  const stepX = (mapWidth - 400) / cols;
+  const stepY = (mapHeight - 300) / rows;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cx = 250 + c * stepX + stepX * 0.35;
+      const cy = 200 + r * stepY + stepY * 0.35;
+      if ((r + c) % 2 === 0) {
+        walls.push({ x: cx - 70, y: cy - 18, w: 140, h: 36 });
+        walls.push({ x: cx - 18, y: cy - 70, w: 36, h: 140 });
+      } else {
+        walls.push({ x: cx - 85, y: cy - 50, w: 170, h: 32 });
+        walls.push({ x: cx - 85, y: cy + 25, w: 170, h: 32 });
+      }
+    }
+  }
+}
+
+function getSafeSpawnPoint() {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const x = 140 + Math.random() * (mapWidth - 280);
+    const y = 140 + Math.random() * (mapHeight - 280);
+    if (!circleIntersectsWalls(x, y, 45)) {
+      return { x, y };
+    }
+  }
+  return { x: mapWidth / 2, y: mapHeight / 2 };
+}
+
+function createPlayerEntity(id, name, isBot, isSpectator = false) {
+  const pos = getSafeSpawnPoint();
+  const color = COLORS[Object.keys(players).length % COLORS.length];
+  return {
+    id, name, isBot, isSpectator,
+    x: pos.x, y: pos.y,
+    vx: 0, vy: 0,
+    angle: 0,
+    radius: 22,
+    color,
+    hp: MAX_HP,
+    maxHp: MAX_HP,
+    ammo: MAX_AMMO,
+    dashCd: 0,
+    dashTimer: 0,
+    dashDirX: 0,
+    dashDirY: 0,
+    invulnTimer: 2.0,
+    dead: false,
+    respawnTimer: 0,
+    respawnsLeft: state.maxRespawns,
+    kills: 0,
+    shotsFired: 0,
+    shotsHit: 0,
+    aiTimer: 0,
+    aiMoveAngle: Math.random() * Math.PI * 2
+  };
+}
+
+function setupLobbyDemo() {
+  state.screen = 'lobby';
+  buildArenaMap(4);
+  players = {};
+  bullets = [];
+  heals = [];
+  healWarnings = [];
+  for (let i = 0; i < 6; i++) {
+    const botId = 'demo_bot_' + i;
+    players[botId] = createPlayerEntity(botId, '演武AI_' + (i + 1), true, false);
+    players[botId].respawnsLeft = 999;
+  }
+}
+
+function startLocalOrHostGame() {
+  document.getElementById('gameover-modal').classList.add('hidden');
+  if (!state.isOnline) {
+    myId = 'player_local';
+    state.isHost = true;
+    state.isSpectator = false;
+  }
+
+  const totalCount = state.isOnline ? Object.keys(players).length + 1 : state.botCount + 1;
+  buildArenaMap(totalCount);
+
+  const oldPlayers = { ...players };
+  players = {};
+  bullets = [];
+  heals = [];
+  healWarnings = [];
+  healSpawnTimer = 5.0;
+
+  const myName = document.getElementById('player-name-input').value.trim() || '特工_01';
+  players[myId] = createPlayerEntity(myId, myName, false, state.isSpectator);
+  if (state.cheats.sizeMode === 1) { players[myId].radius = 44; players[myId].maxHp = 6; players[myId].hp = 6; }
+  if (state.cheats.sizeMode === 2) { players[myId].radius = 12; }
+
+  if (state.isOnline && state.isHost) {
+    for (let id in oldPlayers) {
+      if (id !== myId && !oldPlayers[id].isBot) {
+        players[id] = createPlayerEntity(id, oldPlayers[id].name, false, oldPlayers[id].isSpectator);
+      }
+    }
+    broadcastNet({ type: 'init_world', walls, mapWidth, mapHeight, maxRespawns: state.maxRespawns });
+  } else if (!state.isOnline) {
+    for (let i = 0; i < state.botCount; i++) {
+      const botId = 'bot_' + i;
+      players[botId] = createPlayerEntity(botId, 'AI戰士_' + (i + 1), true, false);
+    }
+  }
+
+  enterGameUI();
+}
+
+function enterGameUI() {
+  state.screen = 'game';
+  document.getElementById('lobby-screen').classList.add('hidden');
+  document.getElementById('hud-screen').classList.remove('hidden');
+  document.getElementById('hud-mode-label').textContent =
+    state.maxRespawns >= 999 ? '極限死鬥 (∞復活)' :
+    state.maxRespawns === 0 ? '經典淘汰 (0復活)' : `競技場 (${state.maxRespawns}次復活)`;
+  updateSpectatorUI();
+}
+
+function returnToLobby() {
+  document.getElementById('gameover-modal').classList.add('hidden');
+  document.getElementById('hud-screen').classList.add('hidden');
+  document.getElementById('admin-panel').classList.add('hidden');
+  document.getElementById('lobby-screen').classList.remove('hidden');
+  state.isOnline = false;
+  setupLobbyDemo();
+}
+
+// 觀戰系統控制
+function toggleSpectateSelf() {
+  const me = players[myId];
+  if (!me) return;
+  me.isSpectator = !me.isSpectator;
+  state.isSpectator = me.isSpectator;
+  if (!me.isSpectator) {
+    const pos = getSafeSpawnPoint();
+    me.x = pos.x; me.y = pos.y; me.hp = me.maxHp; me.dead = false; me.invulnTimer = 2.0;
+    state.specTargetId = null;
+  }
+  updateSpectatorUI();
+}
+
+function updateSpectatorUI() {
+  const me = players[myId];
+  const isSpec = !me || me.isSpectator || (me.dead && me.respawnsLeft <= 0);
+  document.getElementById('spectator-bar').classList.toggle('hidden', !isSpec);
+}
+
+function cycleSpectateTarget(dir) {
+  const activeIds = Object.keys(players).filter(id => !players[id].isSpectator && !players[id].dead);
+  if (activeIds.length === 0) {
+    state.specTargetId = null;
+    document.getElementById('spec-target-name').textContent = '上帝全景';
+    return;
+  }
+  let idx = activeIds.indexOf(state.specTargetId);
+  idx = (idx + dir + activeIds.length) % activeIds.length;
+  state.specTargetId = activeIds[idx];
+  document.getElementById('spec-target-name').textContent = players[state.specTargetId].name;
+}
+
+function setGlobalOverview() {
+  state.specTargetId = null;
+  document.getElementById('spec-target-name').textContent = '上帝全景';
+}
+
+// 三搖桿觸控與滑鼠鍵盤控制
+const joysticks = {
+  move: { active: false, touchId: null, originX: 0, originY: 0, curX: 0, curY: 0, dx: 0, dy: 0 },
+  aim:  { active: false, touchId: null, baseX: 0, baseY: 0, curX: 0, curY: 0, dx: 0, dy: 0, angle: 0, valid: false },
+  dash: { active: false, touchId: null, baseX: 0, baseY: 0, curX: 0, curY: 0, dx: 0, dy: 0, angle: 0, valid: false }
+};
+
+function getRightJoystickCenters() {
+  const w = canvas.width;
+  const h = canvas.height;
+  return {
+    aimX: w - 115,
+    aimY: h - 105,
+    dashX: w - 95,
+    dashY: h - 245,
+    radius: 52
+  };
+}
+
+canvas.addEventListener('touchstart', e => {
+  if (state.screen !== 'game') return;
+  const me = players[myId];
+  if (!me || me.isSpectator || me.dead) return;
+  e.preventDefault();
+  const centers = getRightJoystickCenters();
+
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i];
+    const tx = t.clientX;
+    const ty = t.clientY;
+
+    if (!joysticks.dash.active && Math.hypot(tx - centers.dashX, ty - centers.dashY) <= 68) {
+      joysticks.dash.active = true;
+      joysticks.dash.touchId = t.identifier;
+      joysticks.dash.baseX = centers.dashX;
+      joysticks.dash.baseY = centers.dashY;
+      joysticks.dash.curX = tx;
+      joysticks.dash.curY = ty;
+      joysticks.dash.valid = false;
+      continue;
+    }
+
+    if (tx >= canvas.width * 0.48 && !joysticks.aim.active) {
+      joysticks.aim.active = true;
+      joysticks.aim.touchId = t.identifier;
+      joysticks.aim.baseX = Math.hypot(tx - centers.aimX, ty - centers.aimY) < 90 ? centers.aimX : tx;
+      joysticks.aim.baseY = Math.hypot(tx - centers.aimX, ty - centers.aimY) < 90 ? centers.aimY : ty;
+      joysticks.aim.curX = tx;
+      joysticks.aim.curY = ty;
+      joysticks.aim.valid = false;
+      continue;
+    }
+
+    if (tx < canvas.width * 0.48 && !joysticks.move.active) {
+      joysticks.move.active = true;
+      joysticks.move.touchId = t.identifier;
+      joysticks.move.originX = tx;
+      joysticks.move.originY = ty;
+      joysticks.move.curX = tx;
+      joysticks.move.curY = ty;
+      joysticks.move.dx = 0;
+      joysticks.move.dy = 0;
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  if (state.screen !== 'game') return;
+  e.preventDefault();
+  const maxR = 52;
+
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i];
+    if (joysticks.move.active && t.identifier === joysticks.move.touchId) {
+      joysticks.move.curX = t.clientX;
+      joysticks.move.curY = t.clientY;
+      const vx = t.clientX - joysticks.move.originX;
+      const vy = t.clientY - joysticks.move.originY;
+      const dist = Math.hypot(vx, vy);
+      if (dist > 4) {
+        const clamped = Math.min(dist, maxR);
+        joysticks.move.dx = (vx / dist) * (clamped / maxR);
+        joysticks.move.dy = (vy / dist) * (clamped / maxR);
+      } else {
+        joysticks.move.dx = 0;
+        joysticks.move.dy = 0;
+      }
+    } else if (joysticks.aim.active && t.identifier === joysticks.aim.touchId) {
+      joysticks.aim.curX = t.clientX;
+      joysticks.aim.curY = t.clientY;
+      const vx = t.clientX - joysticks.aim.baseX;
+      const vy = t.clientY - joysticks.aim.baseY;
+      const dist = Math.hypot(vx, vy);
+      joysticks.aim.valid = dist > 12;
+      if (dist > 4) joysticks.aim.angle = Math.atan2(vy, vx);
+    } else if (joysticks.dash.active && t.identifier === joysticks.dash.touchId) {
+      joysticks.dash.curX = t.clientX;
+      joysticks.dash.curY = t.clientY;
+      const vx = t.clientX - joysticks.dash.baseX;
+      const vy = t.clientY - joysticks.dash.baseY;
+      const dist = Math.hypot(vx, vy);
+      joysticks.dash.valid = dist > 10;
+      if (dist > 4) joysticks.dash.angle = Math.atan2(vy, vx);
+    }
+  }
+}, { passive: false });
+
+function handleTouchEndOrCancel(e) {
+  const me = players[myId];
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i];
+    if (joysticks.move.active && t.identifier === joysticks.move.touchId) {
+      joysticks.move.active = false;
+      joysticks.move.dx = 0;
+      joysticks.move.dy = 0;
+    } else if (joysticks.aim.active && t.identifier === joysticks.aim.touchId) {
+      if (me && !me.dead && !me.isSpectator && (joysticks.aim.valid || state.cheats.autoAim)) {
+        const shootAngle = getFinalAimAngle(me, joysticks.aim.angle);
+        tryPlayerShoot(me, shootAngle);
+      }
+      joysticks.aim.active = false;
+      joysticks.aim.valid = false;
+    } else if (joysticks.dash.active && t.identifier === joysticks.dash.touchId) {
+      if (me && !me.dead && !me.isSpectator) {
+        const dashAng = joysticks.dash.valid ? joysticks.dash.angle :
+          (Math.hypot(joysticks.move.dx, joysticks.move.dy) > 0.1 ? Math.atan2(joysticks.move.dy, joysticks.move.dx) : me.angle);
+        tryPlayerDash(me, dashAng);
+      }
+      joysticks.dash.active = false;
+      joysticks.dash.valid = false;
+    }
+  }
+}
+canvas.addEventListener('touchend', handleTouchEndOrCancel);
+canvas.addEventListener('touchcancel', handleTouchEndOrCancel);
+
+const keys = {};
+let mouseAiming = false;
+let mouseScreen = { x: 0, y: 0 };
+
+window.addEventListener('keydown', e => {
+  if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+  keys[e.key.toLowerCase()] = true;
+  if (e.code === 'Space' && state.screen === 'game') {
+    const me = players[myId];
+    if (me && !me.dead && !me.isSpectator) {
+      const worldMouseX = (mouseScreen.x - canvas.width / 2) / camera.zoom + camera.x;
+      const worldMouseY = (mouseScreen.y - canvas.height / 2) / camera.zoom + camera.y;
+      const ang = Math.atan2(worldMouseY - me.y, worldMouseX - me.x);
+      tryPlayerDash(me, ang);
+    }
+  }
+});
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+canvas.addEventListener('mousedown', e => {
+  if (state.screen !== 'game') return;
+  const me = players[myId];
+  if (!me || me.dead || me.isSpectator) return;
+  const centers = getRightJoystickCenters();
+  mouseScreen = { x: e.clientX, y: e.clientY };
+
+  if (Math.hypot(e.clientX - centers.dashX, e.clientY - centers.dashY) <= 55) {
+    tryPlayerDash(me, me.angle);
+    return;
+  }
+  mouseAiming = true;
+});
+
+canvas.addEventListener('mousemove', e => {
+  mouseScreen = { x: e.clientX, y: e.clientY };
+});
+
+canvas.addEventListener('mouseup', () => {
+  if (!mouseAiming) return;
+  mouseAiming = false;
+  const me = players[myId];
+  if (me && !me.dead && !me.isSpectator && state.screen === 'game') {
+    const worldMouseX = (mouseScreen.x - canvas.width / 2) / camera.zoom + camera.x;
+    const worldMouseY = (mouseScreen.y - canvas.height / 2) / camera.zoom + camera.y;
+    const rawAng = Math.atan2(worldMouseY - me.y, worldMouseX - me.x);
+    tryPlayerShoot(me, getFinalAimAngle(me, rawAng));
+  }
+});
+
+function getFinalAimAngle(shooter, fallbackAngle) {
+  if (shooter.id === myId && state.cheats.autoAim) {
+    let bestTarget = null;
+    let bestDist = Infinity;
+    for (let id in players) {
+      const p = players[id];
+      if (id === shooter.id || p.dead || p.isSpectator) continue;
+      const d = Math.hypot(p.x - shooter.x, p.y - shooter.y);
+      if (d < bestDist) {
+        bestDist = d;
+        bestTarget = p;
+      }
+    }
+    if (bestTarget) {
+      const timeToHit = bestDist / BULLET_SPEED;
+      const predX = bestTarget.x + bestTarget.vx * timeToHit * 0.6;
+      const predY = bestTarget.y + bestTarget.vy * timeToHit * 0.6;
+      return Math.atan2(predY - shooter.y, predX - shooter.x);
+    }
+  }
+  return fallbackAngle;
+}
+
+function tryPlayerShoot(p, angle) {
+  const isInfAmmo = (p.id === myId && state.cheats.infAmmo);
+  if (!isInfAmmo && p.ammo < 1.0) return;
+
+  if (!isInfAmmo) p.ammo -= 1.0;
+  p.angle = angle;
+  p.shotsFired++;
+
+  const isHoming = (p.id === myId && state.cheats.homing);
+  const isWallBullet = (p.id === myId && state.cheats.wallBullet);
+
+  const muzzleX = p.x + Math.cos(angle) * (p.radius + 8);
+  const muzzleY = p.y + Math.sin(angle) * (p.radius + 8);
+
+  spawnBullet(p.id, muzzleX, muzzleY, angle, isHoming, isWallBullet);
+  if (p.id === myId) {
+    playTone(520, 'triangle', 0.12, 0.08);
+    screenShake = 4;
+    if (state.isOnline) {
+      broadcastNet({ type: 'shoot', ownerId: p.id, x: muzzleX, y: muzzleY, angle, homing: isHoming, wallBullet: isWallBullet });
+    }
+  }
+}
+
+function spawnBullet(ownerId, x, y, angle, homing = false, wallBullet = false) {
+  const owner = players[ownerId];
+  bullets.push({
+    ownerId,
+    x, y,
+    vx: Math.cos(angle) * BULLET_SPEED,
+    vy: Math.sin(angle) * BULLET_SPEED,
+    angle,
+    color: homing ? '#fbbf24' : (owner ? owner.color : '#00f0ff'),
+    homing,
+    wallBullet,
+    life: 6.0
+  });
+}
+
+function tryPlayerDash(p, angle) {
+  const noCd = (p.id === myId && state.cheats.noCdDash);
+  if (!noCd && p.dashCd > 0) return;
+  if (p.dashTimer > 0) return;
+
+  p.angle = angle;
+  p.dashTimer = DASH_DURATION;
+  p.dashCd = noCd ? 0 : DASH_COOLDOWN;
+  p.dashDirX = Math.cos(angle);
+  p.dashDirY = Math.sin(angle);
+  if (p.id === myId) playTone(320, 'sawtooth', 0.25, 0.08);
+}
+
+function circleIntersectsWalls(cx, cy, r) {
+  for (let w of walls) {
+    const closestX = Math.max(w.x, Math.min(cx, w.x + w.w));
+    const closestY = Math.max(w.y, Math.min(cy, w.y + w.h));
+    if (Math.hypot(cx - closestX, cy - closestY) < r) return true;
+  }
+  return false;
+}
+
+function resolveWallCollision(p) {
+  if (p.id === myId && state.cheats.wallWalk) {
+    p.x = Math.max(p.radius, Math.min(mapWidth - p.radius, p.x));
+    p.y = Math.max(p.radius, Math.min(mapHeight - p.radius, p.y));
+    return;
+  }
+  for (let w of walls) {
+    const closestX = Math.max(w.x, Math.min(p.x, w.x + w.w));
+    const closestY = Math.max(w.y, Math.min(p.y, w.y + w.h));
+    const dx = p.x - closestX;
+    const dy = p.y - closestY;
+    const dist = Math.hypot(dx, dy);
+    if (dist < p.radius) {
+      if (dist > 0) {
+        const overlap = p.radius - dist;
+        p.x += (dx / dist) * overlap;
+        p.y += (dy / dist) * overlap;
+      } else {
+        p.x += p.radius;
+      }
+    }
+  }
+}
+
+function castLaserRay(startX, startY, angle, ignoreWalls = false) {
+  const step = 12;
+  const dx = Math.cos(angle) * step;
+  const dy = Math.sin(angle) * step;
+  let cx = startX;
+  let cy = startY;
+  for (let i = 0; i < 300; i++) {
+    cx += dx;
+    cy += dy;
+    if (cx <= 0 || cx >= mapWidth || cy <= 0 || cy >= mapHeight) {
+      return { x: cx, y: cy, hitType: 'wall' };
+    }
+    if (!ignoreWalls) {
+      for (let w of walls) {
+        if (cx >= w.x && cx <= w.x + w.w && cy >= w.y && cy <= w.y + w.h) {
+          return { x: cx, y: cy, hitType: 'wall' };
+        }
+      }
+    }
+    for (let id in players) {
+      const p = players[id];
+      if (id === myId || p.dead || p.isSpectator) continue;
+      if (Math.hypot(cx - p.x, cy - p.y) <= p.radius) {
+        return { x: cx, y: cy, hitType: 'enemy' };
+      }
+    }
+  }
+  return { x: cx, y: cy, hitType: 'none' };
+}
+
+function spawnParticles(x, y, color, count = 12) {
+  for (let i = 0; i < count; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const spd = 60 + Math.random() * 240;
+    particles.push({
+      x, y,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd,
+      color,
+      life: 0.35 + Math.random() * 0.25,
+      maxLife: 0.6
+    });
+  }
+}
+
+function spawnFloatingText(x, y, text, color) {
+  floatingTexts.push({ x, y, text, color, life: 1.0 });
+}
+
+function damagePlayer(target, shooterId) {
+  if (target.dead || target.invulnTimer > 0) return;
+  if (target.id === myId && state.cheats.god) return;
+
+  target.hp -= 1;
+  target.invulnTimer = 0.45;
+  spawnParticles(target.x, target.y, target.color, 16);
+  if (target.id === myId) {
+    screenShake = 10;
+    playTone(160, 'sawtooth', 0.25, 0.15);
+  }
+
+  if (target.hp <= 0) {
+    target.hp = 0;
+    target.dead = true;
+    spawnParticles(target.x, target.y, '#ff007f', 30);
+
+    const killer = players[shooterId];
+    if (killer) {
+      killer.kills++;
+      if (killer.id === myId && state.screen === 'game') {
+        state.stats.kills++;
+        localStorage.setItem('ns_kills', state.stats.kills);
+        document.getElementById('stat-kills').textContent = state.stats.kills;
+      }
+    }
+
+    if (state.screen === 'game') {
+      appendChat('', `💀 ${killer ? killer.name : '未知'} 擊殺了 ${target.name}！`, 'sys');
+    }
+
+    if (target.respawnsLeft > 0) {
+      if (target.respawnsLeft < 999) target.respawnsLeft--;
+      target.respawnTimer = 2.5;
+    } else {
+      target.respawnTimer = -1;
+      if (target.id === myId && state.screen === 'game') {
+        appendChat('', '👁️ 復活次數已耗盡，已切換至觀戰席！', 'sys');
+        updateSpectatorUI();
+      }
+    }
+  }
+}
+
+let lastTime = performance.now();
+let netSyncTimer = 0;
+
+function update(dt) {
+  if (screenShake > 0) screenShake = Math.max(0, screenShake - dt * 35);
+
+  for (let id in players) {
+    const p = players[id];
+    if (p.isSpectator) continue;
+
+    if (p.dead) {
+      if (p.respawnTimer > 0) {
+        p.respawnTimer -= dt;
+        if (p.respawnTimer <= 0) {
+          const pos = getSafeSpawnPoint();
+          p.x = pos.x; p.y = pos.y;
+          p.hp = p.maxHp;
+          p.ammo = MAX_AMMO;
+          p.dashCd = 0;
+          p.dashTimer = 0;
+          p.invulnTimer = 2.0;
+          p.dead = false;
+          if (p.id === myId) updateSpectatorUI();
+        }
+      }
+      continue;
+    }
+
+    if (p.invulnTimer > 0) p.invulnTimer -= dt;
+    if (p.dashCd > 0) p.dashCd = Math.max(0, p.dashCd - dt);
+
+    if (p.id === myId && state.cheats.infAmmo) {
+      p.ammo = MAX_AMMO;
+    } else if (p.ammo < MAX_AMMO) {
+      p.ammo = Math.min(MAX_AMMO, p.ammo + AMMO_RELOAD_RATE * dt);
+    }
+
+    if (id === myId && state.screen === 'game') {
+      let mx = joysticks.move.dx;
+      let my = joysticks.move.dy;
+      if (keys['w'] || keys['arrowup']) my -= 1;
+      if (keys['s'] || keys['arrowdown']) my += 1;
+      if (keys['a'] || keys['arrowleft']) mx -= 1;
+      if (keys['d'] || keys['arrowright']) mx += 1;
+      const mLen = Math.hypot(mx, my);
+      if (mLen > 1) { mx /= mLen; my /= mLen; }
+
+      if (p.dashTimer > 0) {
+        p.dashTimer -= dt;
+        p.vx = p.dashDirX * DASH_SPEED;
+        p.vy = p.dashDirY * DASH_SPEED;
+        if (Math.random() < 0.6) spawnParticles(p.x, p.y, p.color, 1);
+      } else {
+        const speedMult = state.cheats.speed ? 2.0 : 1.0;
+        p.vx = mx * BASE_SPEED * speedMult;
+        p.vy = my * BASE_SPEED * speedMult;
+        if (mLen > 0.1 && !joysticks.aim.active && !mouseAiming) {
+          p.angle = Math.atan2(my, mx);
+        }
+      }
+
+      if (joysticks.aim.active) {
+        p.angle = getFinalAimAngle(p, joysticks.aim.angle);
+      } else if (mouseAiming) {
+        const wmx = (mouseScreen.x - canvas.width / 2) / camera.zoom + camera.x;
+        const wmy = (mouseScreen.y - canvas.height / 2) / camera.zoom + camera.y;
+        p.angle = getFinalAimAngle(p, Math.atan2(wmy - p.y, wmx - p.x));
+      }
+
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      resolveWallCollision(p);
+    } else if (p.isBot && state.isHost) {
+      updateBotAI(p, dt);
+    }
+  }
+
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    b.life -= dt;
+
+    if (b.homing) {
+      let nearest = null;
+      let minDist = 650;
+      for (let id in players) {
+        const p = players[id];
+        if (id === b.ownerId || p.dead || p.isSpectator) continue;
+        const d = Math.hypot(p.x - b.x, p.y - b.y);
+        if (d < minDist) { minDist = d; nearest = p; }
+      }
+      if (nearest) {
+        const targetAng = Math.atan2(nearest.y - b.y, nearest.x - b.x);
+        let diff = targetAng - b.angle;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        b.angle += Math.sign(diff) * Math.min(Math.abs(diff), 4.2 * dt);
+        b.vx = Math.cos(b.angle) * BULLET_SPEED;
+        b.vy = Math.sin(b.angle) * BULLET_SPEED;
+      }
+    }
+
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+
+    if (b.x < 0 || b.x > mapWidth || b.y < 0 || b.y > mapHeight || b.life <= 0) {
+      bullets.splice(i, 1);
+      continue;
+    }
+
+    if (!b.wallBullet) {
+      let hitWall = false;
+      for (let w of walls) {
+        if (b.x >= w.x && b.x <= w.x + w.w && b.y >= w.y && b.y <= w.y + w.h) {
+          hitWall = true;
+          break;
+        }
+      }
+      if (hitWall) {
+        spawnParticles(b.x, b.y, b.color, 6);
+        bullets.splice(i, 1);
+        continue;
+      }
+    }
+
+    let hitPlayer = false;
+    for (let id in players) {
+      const p = players[id];
+      if (id === b.ownerId || p.dead || p.isSpectator) continue;
+      if (p.dashTimer > 0) continue;
+
+      if (Math.hypot(b.x - p.x, b.y - p.y) <= p.radius + 6) {
+        hitPlayer = true;
+        const shooter = players[b.ownerId];
+        if (shooter) {
+          shooter.shotsHit++;
+          shooter.ammo = Math.min(MAX_AMMO, shooter.ammo + HIT_AMMO_BONUS);
+          if (shooter.id === myId) {
+            playTone(760, 'sine', 0.15, 0.12);
+            spawnFloatingText(shooter.x, shooter.y - 38, '+0.5 彈藥', '#00f0ff');
+          }
+        }
+
+        if (state.isHost) {
+          damagePlayer(p, b.ownerId);
+          if (state.isOnline) {
+            broadcastNet({ type: 'hit_confirm', targetId: p.id, shooterId: b.ownerId });
+          }
+        }
+        break;
+      }
+    }
+
+    if (hitPlayer) {
+      bullets.splice(i, 1);
+    }
+  }
+
+  if (state.isHost) {
+    healSpawnTimer -= dt;
+    const maxHeals = Math.max(2, Math.floor(Object.keys(players).length / 2));
+    if (healSpawnTimer <= 0 && (heals.length + healWarnings.length) < maxHeals) {
+      healSpawnTimer = 10.0;
+      const pos = getSafeSpawnPoint();
+      healWarnings.push({ x: pos.x, y: pos.y, timer: 2.0 });
+    }
+
+    for (let i = healWarnings.length - 1; i >= 0; i--) {
+      healWarnings[i].timer -= dt;
+      if (healWarnings[i].timer <= 0) {
+        heals.push({ id: 'h_' + Math.random(), x: healWarnings[i].x, y: healWarnings[i].y });
+        healWarnings.splice(i, 1);
+      }
+    }
+  }
+
+  for (let i = heals.length - 1; i >= 0; i--) {
+    const h = heals[i];
+    for (let id in players) {
+      const p = players[id];
+      if (p.dead || p.isSpectator || p.hp >= p.maxHp) continue;
+      if (Math.hypot(p.x - h.x, p.y - h.y) <= p.radius + 18) {
+        p.hp = Math.min(p.maxHp, p.hp + 1);
+        spawnParticles(h.x, h.y, '#10b981', 14);
+        if (p.id === myId) {
+          playTone(620, 'sine', 0.25, 0.12);
+          spawnFloatingText(p.x, p.y - 35, '+1 HP', '#10b981');
+        }
+        heals.splice(i, 1);
+        break;
+      }
+    }
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const pt = particles[i];
+    pt.x += pt.vx * dt;
+    pt.y += pt.vy * dt;
+    pt.life -= dt;
+    if (pt.life <= 0) particles.splice(i, 1);
+  }
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const ft = floatingTexts[i];
+    ft.y -= 35 * dt;
+    ft.life -= dt;
+    if (ft.life <= 0) floatingTexts.splice(i, 1);
+  }
+
+  updateCamera(dt);
+
+  if (state.isOnline && state.screen === 'game') {
+    netSyncTimer += dt;
+    if (netSyncTimer >= 0.04) {
+      netSyncTimer = 0;
+      const me = players[myId];
+      if (state.isHost) {
+        broadcastNet({ type: 'sync_state', players, heals, healWarnings });
+      } else if (me && hostConn && hostConn.open) {
+        hostConn.send({
+          type: 'input', id: myId,
+          x: me.x, y: me.y, angle: me.angle,
+          hp: me.hp, ammo: me.ammo, isDashing: me.dashTimer > 0,
+          dead: me.dead, isSpectator: me.isSpectator, radius: me.radius
+        });
+      }
+    }
+  }
+
+  if (state.screen === 'game') {
+    updateHUDAndWinCondition();
+  }
+}
+
+function updateBotAI(bot, dt) {
+  bot.aiTimer -= dt;
+
+  let nearestEnemy = null;
+  let enemyDist = Infinity;
+  for (let id in players) {
+    const p = players[id];
+    if (id === bot.id || p.dead || p.isSpectator) continue;
+    const d = Math.hypot(p.x - bot.x, p.y - bot.y);
+    if (d < enemyDist) { enemyDist = d; nearestEnemy = p; }
+  }
+
+  if (bot.aiTimer <= 0) {
+    bot.aiTimer = state.aiDiff === 'easy' ? 0.8 : state.aiDiff === 'ace' ? 0.25 : 0.45;
+    if (bot.hp < bot.maxHp && heals.length > 0) {
+      bot.aiMoveAngle = Math.atan2(heals[0].y - bot.y, heals[0].x - bot.x);
+    } else if (nearestEnemy) {
+      const toEnemy = Math.atan2(nearestEnemy.y - bot.y, nearestEnemy.x - bot.x);
+      bot.aiMoveAngle = enemyDist > 420 ? toEnemy + (Math.random() - 0.5) * 0.6 : toEnemy + Math.PI * 0.5 * (Math.random() > 0.5 ? 1 : -1);
+    } else {
+      bot.aiMoveAngle += (Math.random() - 0.5) * 2;
+    }
+
+    if (nearestEnemy && bot.ammo >= 1.0) {
+      const aimAng = Math.atan2(nearestEnemy.y - bot.y, nearestEnemy.x - bot.x);
+      const spread = state.aiDiff === 'easy' ? 0.35 : state.aiDiff === 'ace' ? 0.06 : 0.16;
+      tryPlayerShoot(bot, aimAng + (Math.random() - 0.5) * spread);
+    }
+
+    if (state.aiDiff === 'ace' && bot.dashCd <= 0 && nearestEnemy && enemyDist < 500 && Math.random() < 0.3) {
+      tryPlayerDash(bot, bot.aiMoveAngle);
+    }
+  }
+
+  if (bot.dashTimer > 0) {
+    bot.dashTimer -= dt;
+    bot.vx = bot.dashDirX * DASH_SPEED;
+    bot.vy = bot.dashDirY * DASH_SPEED;
+  } else {
+    const spdFactor = state.aiDiff === 'easy' ? 0.75 : 1.0;
+    bot.vx = Math.cos(bot.aiMoveAngle) * BASE_SPEED * spdFactor;
+    bot.vy = Math.sin(bot.aiMoveAngle) * BASE_SPEED * spdFactor;
+    if (nearestEnemy) {
+      bot.angle = Math.atan2(nearestEnemy.y - bot.y, nearestEnemy.x - bot.x);
+    }
+  }
+
+  bot.x += bot.vx * dt;
+  bot.y += bot.vy * dt;
+  resolveWallCollision(bot);
+}
+
+function updateCamera(dt) {
+  if (state.screen === 'lobby') {
+    camera.x = mapWidth / 2;
+    camera.y = mapHeight / 2;
+    camera.zoom = Math.min(canvas.width / mapWidth, canvas.height / mapHeight);
+    return;
+  }
+
+  const me = players[myId];
+  const isSpec = !me || me.isSpectator || (me.dead && me.respawnsLeft <= 0);
+
+  if (isSpec && !state.specTargetId) {
+    camera.x += (mapWidth / 2 - camera.x) * 6 * dt;
+    camera.y += (mapHeight / 2 - camera.y) * 6 * dt;
+    const targetZoom = Math.min(canvas.width / mapWidth, canvas.height / mapHeight) * 0.92;
+    camera.zoom += (targetZoom - camera.zoom) * 6 * dt;
+  } else {
+    const target = isSpec && players[state.specTargetId] ? players[state.specTargetId] : me;
+    if (target) {
+      camera.x += (target.x - camera.x) * 10 * dt;
+      camera.y += (target.y - camera.y) * 10 * dt;
+      const desiredZoom = Math.min(1.0, Math.max(0.65, canvas.width / 1250));
+      camera.zoom += (desiredZoom - camera.zoom) * 8 * dt;
+    }
+  }
+}
+
+function updateHUDAndWinCondition() {
+  const activePlayers = Object.values(players).filter(p => !p.isSpectator);
+  const alivePlayers = activePlayers.filter(p => !p.dead || p.respawnsLeft > 0);
+  document.getElementById('hud-alive-label').textContent = `存活: ${alivePlayers.length} / ${activePlayers.length}`;
+
+  const sorted = [...activePlayers].sort((a, b) => b.kills - a.kills);
+  const lb = document.getElementById('leaderboard-box');
+  lb.innerHTML = sorted.slice(0, 4).map((p, idx) => {
+    const respStr = p.respawnsLeft >= 999 ? '∞' : `♥×${p.respawnsLeft}`;
+    return `<div class="lb-row ${p.id === myId ? 'me' : ''}">
+      <span>#${idx + 1} ${p.name}</span>
+      <span>${p.kills}殺 (${respStr})</span>
+    </div>`;
+  }).join('');
+
+  if (state.maxRespawns < 999 && activePlayers.length >= 2 && alivePlayers.length <= 1) {
+    const winner = alivePlayers[0];
+    state.screen = 'gameover';
+    const isMeWin = winner && winner.id === myId;
+    if (isMeWin) {
+      state.stats.wins++;
+      localStorage.setItem('ns_wins', state.stats.wins);
+      document.getElementById('stat-wins').textContent = state.stats.wins;
+    }
+    const me = players[myId];
+    const acc = me && me.shotsFired > 0 ? Math.round((me.shotsHit / me.shotsFired) * 100) : 0;
+    document.getElementById('go-title').textContent = isMeWin ? '🏆 勝利！' : (winner ? `👑 ${winner.name} 獲勝` : '平手');
+    document.getElementById('go-stats').innerHTML = `
+      <div>本局擊殺：<strong>${me ? me.kills : 0}</strong></div>
+      <div>射擊命中率：<strong>${acc}%</strong>（觸發 ${me ? me.shotsHit : 0} 次 +0.5 彈藥）</div>
+    `;
+    document.getElementById('gameover-modal').classList.remove('hidden');
+  }
+}
+
+function render() {
+  ctx.fillStyle = '#070913';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  const shakeX = (Math.random() - 0.5) * screenShake;
+  const shakeY = (Math.random() - 0.5) * screenShake;
+  ctx.translate(canvas.width / 2 + shakeX, canvas.height / 2 + shakeY);
+  ctx.scale(camera.zoom, camera.zoom);
+  ctx.translate(-camera.x, -camera.y);
+
+  ctx.strokeStyle = 'rgba(0, 240, 255, 0.06)';
+  ctx.lineWidth = 1;
+  const gridSize = 80;
+  for (let x = 0; x <= mapWidth; x += gridSize) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, mapHeight); ctx.stroke();
+  }
+  for (let y = 0; y <= mapHeight; y += gridSize) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(mapWidth, y); ctx.stroke();
+  }
+
+  healWarnings.forEach(w => {
+    ctx.strokeStyle = 'rgba(16, 185, 129, 0.6)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(w.x, w.y, 26 * (1 - w.timer / 2), 0, Math.PI * 2);
+    ctx.stroke();
+  });
+
+  heals.forEach(h => {
+    ctx.save();
+    ctx.translate(h.x, h.y);
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.25)';
+    ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#10b981';
+    ctx.fillRect(-10, -4, 20, 8);
+    ctx.fillRect(-4, -10, 8, 20);
+    ctx.restore();
+  });
+
+  walls.forEach(w => {
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(w.x, w.y, w.w, w.h);
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(w.x, w.y, w.w, w.h);
+  });
+
+  const me = players[myId];
+  if (me && !me.dead && !me.isSpectator && state.screen === 'game') {
+    if (joysticks.aim.active || mouseAiming) {
+      const ray = castLaserRay(me.x, me.y, me.angle, state.cheats.wallBullet);
+      ctx.save();
+      ctx.strokeStyle = me.ammo >= 1.0 || state.cheats.infAmmo ? 'rgba(0, 240, 255, 0.7)' : 'rgba(239, 68, 68, 0.5)';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([10, 8]);
+      ctx.beginPath();
+      ctx.moveTo(me.x, me.y);
+      ctx.lineTo(ray.x, ray.y);
+      ctx.stroke();
+
+      ctx.fillStyle = ray.hitType === 'enemy' ? '#ff007f' : '#00f0ff';
+      ctx.beginPath();
+      ctx.arc(ray.x, ray.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    if (joysticks.dash.active) {
+      const dashAng = joysticks.dash.valid ? joysticks.dash.angle : me.angle;
+      const endX = me.x + Math.cos(dashAng) * DASH_DISTANCE;
+      const endY = me.y + Math.sin(dashAng) * DASH_DISTANCE;
+      ctx.save();
+      ctx.strokeStyle = me.dashCd <= 0 ? 'rgba(245, 158, 11, 0.75)' : 'rgba(148, 163, 184, 0.35)';
+      ctx.lineWidth = 14;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(me.x, me.y);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  bullets.forEach(b => {
+    ctx.save();
+    ctx.fillStyle = b.color;
+    ctx.shadowColor = b.color;
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.homing ? 7 : 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+
+  for (let id in players) {
+    const p = players[id];
+    if (p.isSpectator) continue;
+    if (p.dead) {
+      if (p.respawnTimer > 0) {
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`復活倒數 ${p.respawnTimer.toFixed(1)}s`, p.x, p.y);
+      }
+      continue;
+    }
+
+    ctx.save();
+    if (p.dashTimer > 0) {
+      ctx.globalAlpha = 0.65;
+      ctx.shadowColor = '#f59e0b';
+      ctx.shadowBlur = 20;
+    }
+
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(p.x + Math.cos(p.angle) * (p.radius + 10), p.y + Math.sin(p.angle) * (p.radius + 10));
+    ctx.stroke();
+
+    if (p.invulnTimer > 0 || (p.id === myId && state.cheats.god)) {
+      ctx.strokeStyle = (p.id === myId && state.cheats.god) ? '#fbbf24' : '#38bdf8';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius + 7, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    if (state.cheats.esp && p.id !== myId) {
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(p.x - p.radius - 10, p.y - p.radius - 10, (p.radius + 10) * 2, (p.radius + 10) * 2);
+    }
+
+    const barW = 54;
+    const startX = p.x - barW / 2;
+    const baseY = p.y - p.radius - 26;
+
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(p.name, p.x, baseY - 4);
+
+    const hpSegW = (barW - (p.maxHp - 1) * 2) / p.maxHp;
+    for (let i = 0; i < p.maxHp; i++) {
+      ctx.fillStyle = i < p.hp ? (p.hp === 1 ? '#ef4444' : '#10b981') : 'rgba(255,255,255,0.18)';
+      ctx.fillRect(startX + i * (hpSegW + 2), baseY, hpSegW, 6);
+    }
+
+    const ammoY = baseY + 8;
+    const ammoSegW = (barW - 4) / MAX_AMMO;
+    for (let i = 0; i < MAX_AMMO; i++) {
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.fillRect(startX + i * (ammoSegW + 2), ammoY, ammoSegW, 4);
+      const fillRatio = Math.max(0, Math.min(1, p.ammo - i));
+      if (fillRatio > 0) {
+        ctx.fillStyle = fillRatio >= 1 ? '#fbbf24' : 'rgba(0, 240, 255, 0.75)';
+        ctx.fillRect(startX + i * (ammoSegW + 2), ammoY, ammoSegW * fillRatio, 4);
+      }
+    }
+
+    ctx.restore();
+  }
+
+  particles.forEach(pt => {
+    ctx.globalAlpha = Math.max(0, pt.life / pt.maxLife);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  floatingTexts.forEach(ft => {
+    ctx.globalAlpha = Math.max(0, ft.life);
+    ctx.fillStyle = ft.color;
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(ft.text, ft.x, ft.y);
+  });
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+
+  if (state.screen === 'game' && me && !me.dead && !me.isSpectator) {
+    renderThreeJoysticks(me);
+  }
+}
+
+function renderThreeJoysticks(me) {
+  const c = getRightJoystickCenters();
+
+  const moveBaseX = joysticks.move.active ? joysticks.move.originX : 115;
+  const moveBaseY = joysticks.move.active ? joysticks.move.originY : canvas.height - 115;
+  const moveKnobX = joysticks.move.active ? moveBaseX + joysticks.move.dx * c.radius : moveBaseX;
+  const moveKnobY = joysticks.move.active ? moveBaseY + joysticks.move.dy * c.radius : moveBaseY;
+  drawStick(moveBaseX, moveBaseY, moveKnobX, moveKnobY, c.radius, 'rgba(255,255,255,0.25)', '#ffffff', '移動');
+
+  const aimBaseX = joysticks.aim.active ? joysticks.aim.baseX : c.aimX;
+  const aimBaseY = joysticks.aim.active ? joysticks.aim.baseY : c.aimY;
+  let aimKnobX = aimBaseX, aimKnobY = aimBaseY;
+  if (joysticks.aim.active) {
+    const vx = joysticks.aim.curX - aimBaseX;
+    const vy = joysticks.aim.curY - aimBaseY;
+    const dist = Math.min(Math.hypot(vx, vy), c.radius);
+    const ang = Math.atan2(vy, vx);
+    aimKnobX = aimBaseX + Math.cos(ang) * dist;
+    aimKnobY = aimBaseY + Math.sin(ang) * dist;
+  }
+  const canShoot = me.ammo >= 1.0 || state.cheats.infAmmo;
+  drawStick(aimBaseX, aimBaseY, aimKnobX, aimKnobY, c.radius,
+    canShoot ? 'rgba(0, 240, 255, 0.25)' : 'rgba(239, 68, 68, 0.2)',
+    canShoot ? '#00f0ff' : '#ef4444',
+    `射擊 (${Math.floor(me.ammo)}/3)`
+  );
+
+  const dashBaseX = c.dashX;
+  const dashBaseY = c.dashY;
+  let dashKnobX = dashBaseX, dashKnobY = dashBaseY;
+  if (joysticks.dash.active) {
+    const vx = joysticks.dash.curX - dashBaseX;
+    const vy = joysticks.dash.curY - dashBaseY;
+    const dist = Math.min(Math.hypot(vx, vy), c.radius * 0.85);
+    const ang = Math.atan2(vy, vx);
+    dashKnobX = dashBaseX + Math.cos(ang) * dist;
+    dashKnobY = dashBaseY + Math.sin(ang) * dist;
+  }
+  const dashReady = me.dashCd <= 0;
+  drawStick(dashBaseX, dashBaseY, dashKnobX, dashKnobY, c.radius * 0.85,
+    dashReady ? 'rgba(245, 158, 11, 0.28)' : 'rgba(100, 116, 139, 0.2)',
+    dashReady ? '#f59e0b' : '#64748b',
+    dashReady ? '⚡衝刺' : `${me.dashCd.toFixed(1)}s`
+  );
+
+  if (!dashReady) {
+    const ratio = 1 - (me.dashCd / DASH_COOLDOWN);
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(dashBaseX, dashBaseY, c.radius * 0.85, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio);
+    ctx.stroke();
+  }
+}
+
+function drawStick(bx, by, kx, ky, r, bgCol, fgCol, label) {
+  ctx.save();
+  ctx.fillStyle = bgCol;
+  ctx.strokeStyle = fgCol;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = fgCol;
+  ctx.beginPath(); ctx.arc(kx, ky, r * 0.42, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = '#e2e8f0';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, bx, by + r + 14);
+  ctx.restore();
+}
+
+function gameLoop(now) {
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+  update(dt);
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+setupLobbyDemo();
+appendChat('', '歡迎來到《霓虹突擊：無限競技場》！支援單人混戰與線上多人連線。', 'sys');
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
